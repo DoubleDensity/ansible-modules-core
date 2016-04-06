@@ -249,6 +249,17 @@ EXAMPLES = '''
       datacenter: MyDatacenter
       hostname: esx001.mydomain.local
 
+# Reconfigure the boot device
+# currently supports only net and hd as values
+- vsphere_guest:
+    vcenter_hostname: vcenter.mydomain.local
+    username: myuser
+    password: mypass
+    guest: newvm001
+    state: reconfigured
+    vm_extra_config:
+      bios.bootOrder: net
+
 # Deploy a guest from a template
 - vsphere_guest:
     vcenter_hostname: vcenter.mydomain.local
