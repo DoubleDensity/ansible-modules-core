@@ -820,7 +820,11 @@ def reconfigure_vm(vsphere_client, vm, module, esxi, resource_pool, cluster_name
     changed, changes = update_disks(vsphere_client, vm,
                                     module, vm_disk, changes)
     request = VI.ReconfigVM_TaskRequestMsg()
-
+    if 'bios.bootOrder' in vm_extra_config and vm_extra_config['bios.bootOrder'] in ('net', 'hd'):
+        vm.set_extra_config({ 'bios.bootOrder': vm_extra_config['bios.bootOrder'] })
+        vm.set_extra_config({ 'bios.bootDeviceClasses': 'allow:%s' % vm_extra_config['bios.bootOrder'] })
+    else:
+        module.fail_json(msg="Value not supported for boot '%s'" % vm_extra_config['bios.bootOrder'])
     # Change Memory
     if 'memory_mb' in vm_hardware:
 
