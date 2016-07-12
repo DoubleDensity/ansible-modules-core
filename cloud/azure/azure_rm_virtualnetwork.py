@@ -123,7 +123,7 @@ state:
             "127.0.0.1",
             "127.0.0.3"
         ],
-        "etag": "W/\"0712e87c-f02f-4bb3-8b9e-2da0390a3886\"",
+        "etag": 'W/"0712e87c-f02f-4bb3-8b9e-2da0390a3886"',
         "id": "/subscriptions/XXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXX/resourceGroups/Testing/providers/Microsoft.Network/virtualNetworks/my_test_network",
         "location": "eastus",
         "name": "my_test_network",
@@ -144,8 +144,6 @@ except ImportError:
     # This is handled in azure_rm_common
     pass
 
-
-NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_]{1,61}[a-z0-9_]$")
 
 
 def virtual_network_to_dict(vnet):
@@ -227,10 +225,6 @@ class AzureRMVirtualNetwork(AzureRMModuleBase):
         if not self.location:
             # Set default location
             self.location = resource_group.location
-
-        if not NAME_PATTERN.match(self.name):
-            self.fail("Parameter error: name must begin with a letter or number, end with a letter, number "
-                      "or underscore and may contain only letters, numbers, periods, underscores or hyphens.")
 
         if self.state == 'present' and self.purge_address_prefixes:
             for prefix in self.address_prefixes_cidr:
@@ -333,7 +327,7 @@ class AzureRMVirtualNetwork(AzureRMModuleBase):
                         ),
                         tags=results['tags']
                     )
-                    if results['dns_servers']:
+                    if results.get('dns_servers'):
                         vnet.dhcp_options = DhcpOptions(
                             dns_servers=results['dns_servers']
                         )

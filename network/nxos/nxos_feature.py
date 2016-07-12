@@ -89,12 +89,13 @@ feature:
 def execute_config_command(commands, module):
     try:
         module.configure(commands)
-    except ShellError, clie:
+    except ShellError: 
+        clie = get_exception()
         module.fail_json(msg='Error sending CLI commands',
                          error=str(clie), commands=commands)
 
 
-def get_cli_body_ssh(command, response):
+def get_cli_body_ssh(command, response, module):
     """Get response for when transport=cli.  This is kind of a hack and mainly
     needed because these modules were originally written for NX-API.  And
     not every command supports "| json" when using cli/ssh.  As such, we assume
@@ -118,7 +119,8 @@ def execute_show(cmds, module, command_type=None):
             response = module.execute(cmds, command_type=command_type)
         else:
             response = module.execute(cmds)
-    except ShellError, clie:
+    except ShellError:
+        clie = get_exception()
         module.fail_json(msg='Error sending {0}'.format(cmds),
                          error=str(clie))
     return response
@@ -129,7 +131,7 @@ def execute_show_command(command, module, command_type='cli_show'):
         command += ' | json'
         cmds = [command]
         response = execute_show(cmds, module)
-        body = get_cli_body_ssh(command, response)
+        body = get_cli_body_ssh(command, response, module)
     elif module.params['transport'] == 'nxapi':
         cmds = [command]
         body = execute_show(cmds, module, command_type=command_type)

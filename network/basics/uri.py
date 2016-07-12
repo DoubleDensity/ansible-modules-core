@@ -30,6 +30,9 @@ try:
 except ImportError:
     import simplejson as json
 
+import ansible.module_utils.six as six
+
+
 DOCUMENTATION = '''
 ---
 module: uri
@@ -221,7 +224,8 @@ def write_file(module, url, dest, content):
     f = open(tmpsrc, 'wb')
     try:
         f.write(content)
-    except Exception, err:
+    except Exception:
+        err = get_exception()
         os.remove(tmpsrc)
         module.fail_json(msg="failed to create temporary content file: %s" % str(err))
     f.close()
@@ -256,7 +260,8 @@ def write_file(module, url, dest, content):
     if checksum_src != checksum_dest:
         try:
             shutil.copyfile(tmpsrc, dest)
-        except Exception, err:
+        except Exception:
+            err = get_exception()
             os.remove(tmpsrc)
             module.fail_json(msg="failed to copy %s to %s: %s" % (tmpsrc, dest, str(err)))
 
@@ -264,7 +269,7 @@ def write_file(module, url, dest, content):
 
 
 def url_filename(url):
-    fn = os.path.basename(urlparse.urlsplit(url)[2])
+    fn = os.path.basename(six.moves.urllib.parse.urlsplit(url)[2])
     if fn == '':
         return 'index.html'
     return fn
@@ -279,7 +284,7 @@ def absolute_location(url, location):
         return location
 
     elif location.startswith('/'):
-        parts = urlparse.urlsplit(url)
+        parts = six.moves.urllib.parse.urlsplit(url)
         base = url.replace(parts[2], '')
         return '%s%s' % (base, location)
 

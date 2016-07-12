@@ -162,6 +162,8 @@ options:
     required: false
 # informational: requirements for nodes
 requirements: [ ]
+extends_documentation_fragment:
+    - files
 author: "Jan-Piet Mens (@jpmens)"
 '''
 
@@ -183,13 +185,13 @@ EXAMPLES='''
   get_url: url="file:///tmp/afile.txt" dest=/tmp/afilecopy.txt  
 '''
 
-import urlparse
+from ansible.module_utils.six.moves.urllib.parse import urlsplit
 
 # ==============================================================
 # url handling
 
 def url_filename(url):
-    fn = os.path.basename(urlparse.urlsplit(url)[2])
+    fn = os.path.basename(urlsplit(url)[2])
     if fn == '':
         return 'index.html'
     return fn
@@ -226,7 +228,8 @@ def url_get(module, url, dest, use_proxy, last_mod_time, force, timeout=10, head
     f = os.fdopen(fd, 'wb')
     try:
         shutil.copyfileobj(rsp, f)
-    except Exception, err:
+    except Exception:
+        err = get_exception()
         os.remove(tempname)
         module.fail_json(msg="failed to create temporary content file: %s" % str(err))
     f.close()
@@ -392,7 +395,8 @@ def main():
                 if os.path.exists(dest):
                     backup_file = module.backup_local(dest)
             shutil.copyfile(tmpsrc, dest)
-        except Exception, err:
+        except Exception: 
+            err = get_exception()
             os.remove(tmpsrc)
             module.fail_json(msg="failed to copy %s to %s: %s" % (tmpsrc, dest, str(err)))
         changed = True

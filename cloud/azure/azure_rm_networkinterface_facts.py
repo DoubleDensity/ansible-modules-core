@@ -75,16 +75,11 @@ EXAMPLES = '''
 '''
 
 RETURN = '''
-changed:
-    description: Whether or not the object was changed.
-    returned: always
-    type: bool
-    sample: False
-objects:
-    description: List containing a set of facts for each selected object.
+azure_networkinterfaces:
+    description: List of network interface dicts.
     returned: always
     type: list
-    sample: [{
+    example: [{
         "dns_settings": {
             "applied_dns_servers": [],
             "dns_servers": [],
@@ -92,7 +87,7 @@ objects:
             "internal_fqdn": null
         },
         "enable_ip_forwarding": false,
-        "etag": "W/\"59726bfc-08c4-44ed-b900-f6a559876a9d\"",
+        "etag": 'W/"59726bfc-08c4-44ed-b900-f6a559876a9d"',
         "id": "/subscriptions/3f7e29ba-24e0-42f6-8d9c-5149a14bda37/resourceGroups/Testing/providers/Microsoft.Network/networkInterfaces/nic003",
         "ip_configuration": {
             "name": "default",
@@ -148,7 +143,7 @@ class AzureRMNetworkInterfaceFacts(AzureRMModuleBase):
 
         self.results = dict(
             changed=False,
-            objects=[]
+            ansible_facts=dict(azure_networkinterfaces=[])
         )
 
         self.name = None
@@ -169,11 +164,11 @@ class AzureRMNetworkInterfaceFacts(AzureRMModuleBase):
             self.fail("Parameter error: resource group required when filtering by name.")
 
         if self.name:
-            self.results['objects'] = self.get_item()
+            self.results['ansible_facts']['azure_networkinterfaces'] = self.get_item()
         elif self.resource_group:
-            self.results['objects'] = self.list_resource_group()
+            self.results['ansible_facts']['azure_networkinterfaces'] = self.list_resource_group()
         else:
-            self.results['objects'] = self.list_all()
+            self.results['ansible_facts']['azure_networkinterfaces'] = self.list_all()
 
         return self.results
 
@@ -187,7 +182,8 @@ class AzureRMNetworkInterfaceFacts(AzureRMModuleBase):
             pass
 
         if item and self.has_tags(item.tags, self.tags):
-            result = [self.serialize_obj(item, AZURE_OBJECT_CLASS)]
+            nic = self.serialize_obj(item, AZURE_OBJECT_CLASS)
+            result = [nic]
 
         return result
 
@@ -201,7 +197,8 @@ class AzureRMNetworkInterfaceFacts(AzureRMModuleBase):
         results = []
         for item in response:
             if self.has_tags(item.tags, self.tags):
-                results.append(self.serialize_obj(item, AZURE_OBJECT_CLASS))
+                nic = self.serialize_obj(item, AZURE_OBJECT_CLASS)
+                results.append(nic)
         return results
 
     def list_all(self):
@@ -214,7 +211,8 @@ class AzureRMNetworkInterfaceFacts(AzureRMModuleBase):
         results = []
         for item in response:
             if self.has_tags(item.tags, self.tags):
-                results.append(self.serialize_obj(item, AZURE_OBJECT_CLASS))
+                nic = self.serialize_obj(item, AZURE_OBJECT_CLASS)
+                results.append(nic)
         return results
 
 

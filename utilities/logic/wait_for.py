@@ -326,7 +326,7 @@ def _convert_host_to_hex(host):
             ips.append((family, hexip_hf))
     return ips
 
-def _create_connection( (host, port), connect_timeout):
+def _create_connection(host, port, connect_timeout):
     """
     Connect to a 2-tuple (host, port) and return
     the socket object.
@@ -337,7 +337,7 @@ def _create_connection( (host, port), connect_timeout):
         Socket object
     """
     if sys.version_info < (2, 6):
-        (family, _) = _convert_host_to_ip(host)
+        (family, _) = (_convert_host_to_ip(host))[0]
         connect_socket = socket.socket(family, socket.SOCK_STREAM)
         connect_socket.settimeout(connect_timeout)
         connect_socket.connect( (host, port) )
@@ -413,7 +413,7 @@ def main():
                     break
             elif port:
                 try:
-                    s = _create_connection( (host, port), connect_timeout)
+                    s = _create_connection(host, port, connect_timeout)
                     s.shutdown(socket.SHUT_RDWR)
                     s.close()
                     time.sleep(1)
@@ -435,7 +435,8 @@ def main():
             if path:
                 try:
                     os.stat(path)
-                except OSError, e:
+                except OSError:
+                    e = get_exception()
                     # If anything except file not present, throw an error
                     if e.errno != 2:
                         elapsed = datetime.datetime.now() - start
@@ -459,7 +460,7 @@ def main():
             elif port:
                 alt_connect_timeout = math.ceil(_timedelta_total_seconds(end - datetime.datetime.now()))
                 try:
-                    s = _create_connection((host, port), min(connect_timeout, alt_connect_timeout))
+                    s = _create_connection(host, port, min(connect_timeout, alt_connect_timeout))
                 except:
                     # Failed to connect by connect_timeout. wait and try again
                     pass

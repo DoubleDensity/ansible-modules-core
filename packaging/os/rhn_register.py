@@ -119,8 +119,9 @@ sys.path.insert(0, '/usr/share/rhn')
 try:
     import up2date_client
     import up2date_client.config
-except ImportError, e:
-    module.fail_json(msg="Unable to import up2date_client.  Is 'rhn-client-tools' installed?\n%s" % e)
+    HAS_UP2DATE_CLIENT = True
+except ImportError:
+    HAS_UP2DATE_CLIENT = False
 
 # INSERT REDHAT SNIPPETS
 from ansible.module_utils.redhat import *
@@ -137,6 +138,9 @@ class Rhn(RegistrationBase):
         '''
             Read configuration from /etc/sysconfig/rhn/up2date
         '''
+        if not HAS_UP2DATE_CLIENT:
+            return None
+
         self.config = up2date_client.config.initUp2dateConfig()
 
         # Add support for specifying a default value w/o having to standup some
@@ -339,7 +343,7 @@ def main():
                     state = dict(default='present', choices=['present', 'absent']),
                     username = dict(default=None, required=False),
                     password = dict(default=None, required=False, no_log=True),
-                    server_url = dict(default=rhn.config.get_option('serverURL'), required=False),
+                    server_url = dict(default=None, required=False),
                     activationkey = dict(default=None, required=False, no_log=True),
                     profilename = dict(default=None, required=False),
                     sslcacert = dict(default=None, required=False, type='path'),
@@ -348,6 +352,12 @@ def main():
                     channels = dict(default=[], type='list'),
                 )
             )
+
+    if not HAS_UP2DATE_CLIENT:
+        module.fail_json(msg="Unable to import up2date_client.  Is 'rhn-client-tools' installed?")
+
+    if not module.params['server_url']:
+        module.params['server_url'] = rhn.config.get_option('serverURL')
 
     state = module.params['state']
     rhn.username = module.params['username']
@@ -377,7 +387,8 @@ def main():
                 rhn.enable()
                 rhn.register(module.params['enable_eus'] == True, activationkey, profilename, sslcacert, systemorgid)
                 rhn.subscribe(channels)
-            except Exception, e:
+            except Exception:
+                e = get_exception()
                 module.fail_json(msg="Failed to register with '%s': %s" % (rhn.hostname, e))
 
             module.exit_json(changed=True, msg="System successfully registered to '%s'." % rhn.hostname)
@@ -389,7 +400,8 @@ def main():
         else:
             try:
                 rhn.unregister()
-            except Exception, e:
+            except Exception:
+                e = get_exception()
                 module.fail_json(msg="Failed to unregister: %s" % e)
 
             module.exit_json(changed=True, msg="System successfully unregistered from %s." % rhn.hostname)

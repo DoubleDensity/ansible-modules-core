@@ -26,8 +26,11 @@ DOCUMENTATION = '''
 module: docker
 version_added: "1.4"
 short_description: manage docker containers
+deprecated: In 2.2 use M(docker_container) and M(docker_image) instead.
 description:
-  - Manage the life cycle of docker containers.
+  - This is the original Ansible module for managing the Docker container life cycle.
+  - "NOTE: Additional and newer modules are available. For the latest on orchestrating containers with Ansible
+    visit our Getting Started with Docker Guide at https://github.com/ansible/ansible/blob/devel/docsite/rst/guide_docker.rst."
 options:
   count:
     description:
@@ -742,10 +745,6 @@ class DockerManager(object):
         if self.module.params.get('links'):
             self.links = self.get_links(self.module.params.get('links'))
 
-        env = self.module.params.get('env', None)
-        env_file = self.module.params.get('env_file', None)
-        self.environment = self.get_environment(env, env_file)
-
         self.ulimits = None
         if self.module.params.get('ulimits'):
             self.ulimits = []
@@ -843,6 +842,10 @@ class DockerManager(object):
                                     timeout=timeout)
 
         self.docker_py_versioninfo = get_docker_py_versioninfo()
+
+        env = self.module.params.get('env', None)
+        env_file = self.module.params.get('env_file', None)
+        self.environment = self.get_environment(env, env_file)
 
     def _check_capabilities(self):
         """
@@ -1340,7 +1343,7 @@ class DockerManager(object):
             # STDIN_OPEN
 
             expected_stdin_open = self.module.params.get('stdin_open')
-            actual_stdin_open = container['Config']['AttachStdin']
+            actual_stdin_open = container['Config']['OpenStdin']
             if actual_stdin_open != expected_stdin_open:
                 self.reload_reasons.append('stdin_open ({0} => {1})'.format(actual_stdin_open, expected_stdin_open))
                 differing.append(container)
@@ -1869,7 +1872,7 @@ def main():
             domainname      = dict(default=None),
             env             = dict(type='dict'),
             env_file        = dict(default=None),
-            dns             = dict(),
+            dns             = dict(default=None, type='list'),
             detach          = dict(default=True, type='bool'),
             state           = dict(default='started', choices=['present', 'started', 'reloaded', 'restarted', 'stopped', 'killed', 'absent', 'running']),
             signal          = dict(default=None),

@@ -313,7 +313,7 @@ EXAMPLES = """
       - us-east-1a
       - us-east-1d
     listeners:
-      - protocols: http
+      - protocol: http
       - load_balancer_port: 80
       - instance_port: 80
 
@@ -327,7 +327,7 @@ EXAMPLES = """
       - us-east-1a
       - us-east-1d
     listeners:
-      - protocols: http
+      - protocol: http
       - load_balancer_port: 80
       - instance_port: 80
     stickiness:
@@ -345,7 +345,7 @@ EXAMPLES = """
       - us-east-1a
       - us-east-1d
     listeners:
-      - protocols: http
+      - protocol: http
       - load_balancer_port: 80
       - instance_port: 80
     stickiness:
@@ -363,7 +363,7 @@ EXAMPLES = """
       - us-east-1a
       - us-east-1d
     listeners:
-      - protocols: http
+      - protocol: http
       - load_balancer_port: 80
       - instance_port: 80
     tags:
@@ -381,7 +381,7 @@ EXAMPLES = """
       - us-east-1a
       - us-east-1d
     listeners:
-      - protocols: http
+      - protocol: http
       - load_balancer_port: 80
       - instance_port: 80
     tags: {}
@@ -408,7 +408,7 @@ def _throttleable_operation(max_retries):
             while True:
                 try:
                     return op(*args, **kwargs)
-                except boto.exception.BotoServerError, e:
+                except boto.exception.BotoServerError as e:
                     if retry < max_retries and e.code in \
                             ("Throttling", "RequestLimitExceeded"):
                         retry = retry + 1
@@ -624,7 +624,7 @@ class ElbManager(object):
         for x in range(0, max_retries):
             try:
                 result = self.elb_conn.get_all_lb_attributes(self.name)
-            except (boto.exception.BotoServerError, StandardError), e:
+            except (boto.exception.BotoServerError, StandardError) as e:
                 if "LoadBalancerNotFound" in e.code:
                     status_achieved = True
                     break
@@ -652,7 +652,7 @@ class ElbManager(object):
                         break
                     else:
                         time.sleep(polling_increment_secs)
-                except (boto.exception.BotoServerError, StandardError), e:
+                except (boto.exception.BotoServerError, StandardError) as e:
                     if 'InvalidNetworkInterfaceID' in e.code:
                         status_achieved = True
                         break
@@ -673,14 +673,14 @@ class ElbManager(object):
         try:
             return connect_to_aws(boto.ec2.elb, self.region,
                                   **self.aws_connect_params)
-        except (boto.exception.NoAuthHandlerFound, AnsibleAWSError), e:
+        except (boto.exception.NoAuthHandlerFound, AnsibleAWSError) as e:
             self.module.fail_json(msg=str(e))
 
     def _get_ec2_connection(self):
         try:
             return connect_to_aws(boto.ec2, self.region,
                                   **self.aws_connect_params)
-        except (boto.exception.NoAuthHandlerFound, StandardError), e:
+        except (boto.exception.NoAuthHandlerFound, StandardError) as e:
             self.module.fail_json(msg=str(e))
 
     @_throttleable_operation(_THROTTLING_RETRIES)
@@ -817,7 +817,7 @@ class ElbManager(object):
     def _enable_zones(self, zones):
         try:
             self.elb.enable_zones(zones)
-        except boto.exception.BotoServerError, e:
+        except boto.exception.BotoServerError as e:
             if "Invalid Availability Zone" in e.error_message:
                 self.module.fail_json(msg=e.error_message)
             else:
@@ -827,7 +827,7 @@ class ElbManager(object):
     def _disable_zones(self, zones):
         try:
             self.elb.disable_zones(zones)
-        except boto.exception.BotoServerError, e:
+        except boto.exception.BotoServerError as e:
             if "Invalid Availability Zone" in e.error_message:
                 self.module.fail_json(msg=e.error_message)
             else:
@@ -1078,10 +1078,14 @@ class ElbManager(object):
 
     def _get_backend_policies(self):
         """Get a list of backend policies"""
-        return [
-            str(backend.instance_port) + ':' + policy.policy_name for backend in self.elb.backends
-            for policy in backend.policies
-        ]
+        policies = []
+        if self.elb.backends is not None:
+            for backend in self.elb.backends:
+                if backend.policies is not None:
+                    for policy in backend.policies:
+                        policies.append(str(backend.instance_port) + ':' + policy.policy_name)
+
+        return policies
 
     def _set_backend_policies(self):
         """Sets policies for all backends"""
@@ -1114,9 +1118,10 @@ class ElbManager(object):
 
     def _get_proxy_protocol_policy(self):
         """Find out if the elb has a proxy protocol enabled"""
-        for policy in self.elb.policies.other_policies:
-            if policy.policy_name == 'ProxyProtocol-policy':
-                return policy.policy_name
+        if self.elb.policies is not None and self.elb.policies.other_policies is not None:
+            for policy in self.elb.policies.other_policies:
+                if policy.policy_name == 'ProxyProtocol-policy':
+                    return policy.policy_name
 
         return None
 
@@ -1137,11 +1142,20 @@ class ElbManager(object):
         b = set(b)
         return [aa for aa in a if aa not in b]
 
+    def _get_instance_ids(self):
+        """Get the current list of instance ids installed in the elb"""
+        instances = []
+        if self.elb.instances is not None:
+            for instance in self.elb.instances:
+                instances.append(instance.id)
+
+        return instances
+
     def _set_instance_ids(self):
         """Register or deregister instances from an lb instance"""
         assert_instances = self.instance_ids or []
 
-        has_instances = [has_instance.id for has_instance in self.elb.instances]
+        has_instances = self._get_instance_ids()
 
         add_instances = self._diff_list(assert_instances, has_instances)
         if add_instances:
@@ -1284,7 +1298,7 @@ def main():
 
                 group_id = [ str(grp.id) for grp in grp_details if str(grp.name) in group_name ]
                 security_group_ids.extend(group_id)
-        except boto.exception.NoAuthHandlerFound, e:
+        except boto.exception.NoAuthHandlerFound as e:
             module.fail_json(msg = str(e))
 
 

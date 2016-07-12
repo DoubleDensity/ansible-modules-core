@@ -78,6 +78,15 @@ options:
     default:
     required: false
     version_added: "2.1"
+  validate_certs:
+      description:
+        - This only applies if using a https url as the source of the file.
+        - This should only set to C(no) used on personally controlled sites using self-signed cer
+        - Prior to 2.2 the code worked as if this was set to C(yes).
+      required: false
+      default: "yes"
+      choices: ["yes", "no"]
+      version_added: "2.2"
 author: "Dag Wieers (@dagwieers)"
 todo:
     - re-implement tar support using native tarfile module
@@ -113,13 +122,15 @@ import grp
 import datetime
 import time
 import binascii
-from zipfile import ZipFile
+import codecs
+from zipfile import ZipFile, BadZipfile
 
 # String from tar that shows the tar contents are different from the
 # filesystem
 OWNER_DIFF_RE = re.compile(r': Uid differs$')
 GROUP_DIFF_RE = re.compile(r': Gid differs$')
 MODE_DIFF_RE = re.compile(r': Mode differs$')
+MOD_TIME_DIFF_RE = re.compile(r': Mod time differs$')
 #NEWER_DIFF_RE = re.compile(r' is newer or same age.$')
 MISSING_FILE_RE = re.compile(r': Warning: Cannot stat: No such file or directory$')
 ZIP_FILE_MODE_RE = re.compile(r'([r-][w-][stx-]){3}')
@@ -162,17 +173,41 @@ class ZipArchive(object):
 #                    mode += 2**(9+j)
         return ( mode & ~umask )
 
+    def _legacy_file_list(self, force_refresh=False):
+        unzip_bin = self.module.get_bin_path('unzip')
+        if not unzip_bin:
+            raise UnarchiveError('Python Zipfile cannot read %s and unzip not found' % self.src)
+
+        rc, out, err = self.module.run_command([unzip_bin, '-v', self.src])
+        if rc:
+            raise UnarchiveError('Neither python zipfile nor unzip can read %s' % self.src)
+
+        for line in out.splitlines()[3:-2]:
+            fields = line.split(None, 7)
+            self._files_in_archive.append(fields[7])
+            self._infodict[fields[7]] = long(fields[6])
+
     def _crc32(self, path):
         if self._infodict:
             return self._infodict[path]
 
-        archive = ZipFile(self.src)
         try:
-            for item in archive.infolist():
-                self._infodict[item.filename] = long(item.CRC)
-        except:
-            archive.close()
-            raise UnarchiveError('Unable to list files in the archive')
+            archive = ZipFile(self.src)
+        except BadZipfile:
+            e = get_exception()
+            if e.args[0].lower().startswith('bad magic number'):
+                # Python2.4 can't handle zipfiles with > 64K files.  Try using
+                # /usr/bin/unzip instead
+                self._legacy_file_list()
+            else:
+                raise
+        else:
+            try:
+                for item in archive.infolist():
+                    self._infodict[item.filename] = long(item.CRC)
+            except:
+                archive.close()
+                raise UnarchiveError('Unable to list files in the archive')
 
         return self._infodict[path]
 
@@ -182,16 +217,26 @@ class ZipArchive(object):
             return self._files_in_archive
 
         self._files_in_archive = []
-        archive = ZipFile(self.src)
         try:
-            for member in archive.namelist():
-                if member not in self.excludes:
-                    self._files_in_archive.append(member)
-        except:
-            archive.close()
-            raise UnarchiveError('Unable to list files in the archive')
+            archive = ZipFile(self.src)
+        except BadZipfile:
+            e = get_exception()
+            if e.args[0].lower().startswith('bad magic number'):
+                # Python2.4 can't handle zipfiles with > 64K files.  Try using
+                # /usr/bin/unzip instead
+                self._legacy_file_list(force_refresh)
+            else:
+                raise
+        else:
+            try:
+                for member in archive.namelist():
+                    if member not in self.excludes:
+                        self._files_in_archive.append(member)
+            except:
+                archive.close()
+                raise UnarchiveError('Unable to list files in the archive')
 
-        archive.close()
+            archive.close()
         return self._files_in_archive
 
     def is_unarchived(self):
@@ -266,13 +311,22 @@ class ZipArchive(object):
         for line in old_out.splitlines():
             change = False
 
-            pcs = line.split()
-            if len(pcs) != 8: continue
+            pcs = line.split(None, 7)
+            if len(pcs) != 8:
+                # Too few fields... probably a piece of the header or footer
+                continue
+
+            # Check first and seventh field in order to skip header/footer
+            if len(pcs[0]) != 7 and len(pcs[0]) != 10: continue
+            if len(pcs[6]) != 15: continue
+
+            if pcs[0][0] not in 'dl-?' or not frozenset(pcs[0][1:]).issubset('rwxst-'):
+                continue
 
             ztype = pcs[0][0]
-            permstr = pcs[0][1:10]
-            version = pcs[0][1]
-            ostype = pcs[0][2]
+            permstr = pcs[0][1:]
+            version = pcs[1]
+            ostype = pcs[2]
             size = int(pcs[3])
             path = pcs[7]
 
@@ -342,8 +396,11 @@ class ZipArchive(object):
                 diff += 'c%s++++++.?? %s\n' % (ftype, path)
                 continue
 
-            itemized = bytearray('.%s.......??' % ftype)
+            itemized = list('.%s.......??' % ftype)
 
+            # Note: this timestamp calculation has a rounding error
+            # somewhere... unzip and this timestamp can be one second off
+            # When that happens, we report a change and re-unzip the file
             dt_object = datetime.datetime(*(time.strptime(pcs[6], '%Y%m%d.%H%M%S')[0:6]))
             timestamp = time.mktime(dt_object.timetuple())
 
@@ -384,16 +441,24 @@ class ZipArchive(object):
 
             # Do not handle permissions of symlinks
             if ftype != 'L':
+
+                # Use the new mode provided with the action, if there is one
+                if self.file_args['mode']:
+                    if isinstance(self.file_args['mode'], int):
+                        mode = self.file_args['mode']
+                    else:
+                        try:
+                            mode = int(self.file_args['mode'], 8)
+                        except Exception:
+                            e = get_exception()
+                            self.module.fail_json(path=path, msg="mode %(mode)s must be in octal form" % self.file_args, details=str(e))
                 # Only special files require no umask-handling
-                if ztype == '?':
+                elif ztype == '?':
                     mode = self._permstr_to_octal(permstr, 0)
                 else:
                     mode = self._permstr_to_octal(permstr, umask)
-                if self.file_args['mode'] and  self.file_args['mode'] != stat.S_IMODE(st.st_mode):
-                    change = True
-                    err += 'Path %s differs in permissions (%o vs %o)\n' % (path, self.file_args['mode'], stat.S_IMODE(st.st_mode))
-                    itemized[5] = 'p'
-                elif mode != stat.S_IMODE(st.st_mode):
+
+                if mode != stat.S_IMODE(st.st_mode):
                     change = True
                     itemized[5] = 'p'
                     err += 'Path %s differs in permissions (%o vs %o)\n' % (path, mode, stat.S_IMODE(st.st_mode))
@@ -441,7 +506,7 @@ class ZipArchive(object):
             if change:
                 if path not in self.includes:
                     self.includes.append(path)
-                diff += '%s %s\n' % (itemized, path)
+                diff += '%s %s\n' % (''.join(itemized), path)
 
         if self.includes:
             unarchived = False
@@ -490,6 +555,7 @@ class TgzArchive(object):
             # Fallback to tar
             self.cmd_path = self.module.get_bin_path('tar')
         self.zipflag = 'z'
+        self.compress_mode = 'gz'
         self._files_in_archive = []
 
     @property
@@ -508,6 +574,9 @@ class TgzArchive(object):
             raise UnarchiveError('Unable to list files in the archive')
 
         for filename in out.splitlines():
+            # Compensate for locale-related problems in gtar output (octal unicode representation) #11348
+#            filename = filename.decode('string_escape')
+            filename = codecs.escape_decode(filename)[0]
             if filename and filename not in self.excludes:
                 self._files_in_archive.append(filename)
         return self._files_in_archive
@@ -546,6 +615,8 @@ class TgzArchive(object):
             if run_uid == 0 and not self.file_args['group'] and GROUP_DIFF_RE.search(line):
                 out += line + '\n'
             if not self.file_args['mode'] and MODE_DIFF_RE.search(line):
+                out += line + '\n'
+            if MOD_TIME_DIFF_RE.search(line):
                 out += line + '\n'
             if MISSING_FILE_RE.search(line):
                 out += line + '\n'
@@ -589,7 +660,10 @@ class TgzArchive(object):
 class TarArchive(TgzArchive):
     def __init__(self, src, dest, file_args, module):
         super(TarArchive, self).__init__(src, dest, file_args, module)
+        # argument to tar
         self.zipflag = ''
+        # parameter for python tarfile library
+        self.compress_mode = ''
 
 
 # class to handle bzip2 compressed tar files
@@ -597,6 +671,7 @@ class TarBzipArchive(TgzArchive):
     def __init__(self, src, dest, file_args, module):
         super(TarBzipArchive, self).__init__(src, dest, file_args, module)
         self.zipflag = 'j'
+        self.compress_mode = 'bz2'
 
 
 # class to handle xz compressed tar files
@@ -604,6 +679,7 @@ class TarXzArchive(TgzArchive):
     def __init__(self, src, dest, file_args, module):
         super(TarXzArchive, self).__init__(src, dest, file_args, module)
         self.zipflag = 'J'
+        self.compress_mode = ''
 
 
 # try handlers in order and return the one that works or bail if none work
@@ -627,12 +703,17 @@ def main():
             creates           = dict(required=False, type='path'),
             list_files        = dict(required=False, default=False, type='bool'),
             keep_newer        = dict(required=False, default=False, type='bool'),
-            exclude           = dict(requited=False, default=[], type='list'),
+            exclude           = dict(required=False, default=[], type='list'),
             extra_opts        = dict(required=False, default=[], type='list'),
+            validate_certs    = dict(required=False, default=True, type='bool'),
         ),
         add_file_common_args = True,
+        # check-mode only works for zip files
 #        supports_check_mode = True,
     )
+
+    # We screenscrape a huge amount of commands so use C locale anytime we do
+    module.run_command_environ_update = dict(LANG='C', LC_ALL='C', LC_MESSAGES='C', LC_CTYPE='C')
 
     src    = os.path.expanduser(module.params['src'])
     dest   = os.path.expanduser(module.params['dest'])
@@ -662,7 +743,8 @@ def main():
                     f.write(data)
                 f.close()
                 src = package
-            except Exception, e:
+            except Exception:
+                e = get_exception()
                 module.fail_json(msg="Failure downloading %s, %s" % (src, e))
         else:
             module.fail_json(msg="Source '%s' does not exist" % src)
@@ -673,7 +755,8 @@ def main():
     try:
         if os.path.getsize(src) == 0:
             module.fail_json(msg="Invalid archive '%s', the file is 0 bytes" % src)
-    except Exception, e:
+    except Exception:
+        e = get_exception()
         module.fail_json(msg="Source '%s' not readable" % src)
 
     # is dest OK to receive tar file?
@@ -699,7 +782,7 @@ def main():
             if res_args['extract_results']['rc'] != 0:
                 module.fail_json(msg="failed to unpack %s to %s" % (src, dest), **res_args)
         except IOError:
-            module.fail_json(msg="failed to unpack %s to %s" % (src, dest))
+            module.fail_json(msg="failed to unpack %s to %s" % (src, dest), **res_args)
         else:
             res_args['changed'] = True
 
@@ -713,8 +796,9 @@ def main():
             file_args['path'] = os.path.join(dest, filename)
             try:
                 res_args['changed'] = module.set_fs_attributes_if_different(file_args, res_args['changed'])
-            except (IOError, OSError), e:
-                module.fail_json(msg="Unexpected error when accessing exploded file: %s" % str(e))
+            except (IOError, OSError):
+                e = get_exception()
+                module.fail_json(msg="Unexpected error when accessing exploded file: %s" % str(e), **res_args)
 
     if module.params['list_files']:
         res_args['files'] = handler.files_in_archive
