@@ -251,6 +251,17 @@ EXAMPLES = '''
       datacenter: MyDatacenter
       hostname: esx001.mydomain.local
 
+# Reconfigure the boot device
+# currently supports only net and hd as values
+- vsphere_guest:
+    vcenter_hostname: vcenter.mydomain.local
+    username: myuser
+    password: mypass
+    guest: newvm001
+    state: reconfigured
+    vm_extra_config:
+      bios.bootOrder: net
+
 # Deploy a guest from a template
 - vsphere_guest:
     vcenter_hostname: vcenter.mydomain.local
@@ -848,6 +859,11 @@ def reconfigure_vm(vsphere_client, vm, module, esxi, resource_pool, cluster_name
     changed, changes = update_disks(vsphere_client, vm,
                                     module, vm_disk, changes)
     request = VI.ReconfigVM_TaskRequestMsg()
+    if 'bios.bootOrder' in vm_extra_config and vm_extra_config['bios.bootOrder'] in ('net', 'hd'):
+        vm.set_extra_config({ 'bios.bootOrder': vm_extra_config['bios.bootOrder'] })
+        vm.set_extra_config({ 'bios.bootDeviceClasses': 'allow:%s' % vm_extra_config['bios.bootOrder'] })
+    else:
+        module.fail_json(msg="Value not supported for boot '%s'" % vm_extra_config['bios.bootOrder'])
 
     # Change extra config
     if vm_extra_config:
